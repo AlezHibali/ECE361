@@ -54,7 +54,7 @@ int main (int argc, char *argv[]) {
     if (response) strcpy(server_msg, "yes");
     else strcpy(server_msg, "no");
 
-    long send_size = sendto(socketfd, server_msg, strlen(server_msg), 0, (struct sockaddr*)&server_info, &client_len);
+    long send_size = sendto(socketfd, server_msg, strlen(server_msg), 0, (struct sockaddr*)&client_info, &client_len);
     if (send_size < 0){
         printf("Message Sending Error.");
         return -1;
