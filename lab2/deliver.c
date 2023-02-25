@@ -145,6 +145,11 @@ int main (int argc, char *argv[]) {
     int time_sent = 0;
 
     for (int frag_no = 1; frag_no <= total_frag; frag_no++){
+        //timer_start
+        clock_t start, end;
+        double time_used;
+        start = clock();
+        
         /* Send packets */
         long sent = sendto(socketfd, packet_list[frag_no-1], BUFF_SIZE, 0, (struct sockaddr*)&server_info, server_len);
         if (sent < 0){
@@ -155,8 +160,16 @@ int main (int argc, char *argv[]) {
         /* ACK receiving */
         memset(server_msg, 0, sizeof(server_msg));
         if (recvfrom(socketfd, server_msg, sizeof(server_msg), 0, (struct sockaddr*)&server_info, &server_len)<0){
-            if (time_sent > 50){
-                printf("Time Out / Too many Resends\n");
+            end = clock();
+            time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+            //printf("%f sec pass\n", time_used);
+            
+            if(time_used > 1){
+                printf("Time Out\n");
+                return -1;
+            }
+            else if (time_sent > 50){
+                printf("Too many Re-sends\n");
                 return -1;
             }
             printf("Error Receiving ACK, Try Resending\n");
@@ -172,7 +185,7 @@ int main (int argc, char *argv[]) {
             // printf("ACK received ok for %s frag %d\n", filename, frag_no);
         }
         else if (time_sent > 50){
-            printf("Time Out / Too many Resends\n");
+            printf("Time Out / Too many Re-sends\n");
             return -1;
         }
         else{
