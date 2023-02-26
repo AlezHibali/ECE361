@@ -180,7 +180,7 @@ int main (int argc, char *argv[]) {
                 printf("Too many Re-sends\n");
                 return -1;
             }
-            printf("Timeout or Error Receiving ACK, Try Resending\n");
+            printf("Timeout or Error Receiving ACK for Packet #%d, Try Resending\n", frag_no);
             frag_no--; time_sent++;
             goto update;
         }

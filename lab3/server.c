@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <time.h>
 #include "packet.h"
 
 int main (int argc, char *argv[]) {
@@ -14,6 +15,9 @@ int main (int argc, char *argv[]) {
         printf("server <UDP listen port>\n");
         return -1;
     }
+
+    // seed set
+    srand(time(NULL));
 
     int port = atoi(argv[1]);
     int socketfd;
@@ -97,6 +101,13 @@ int main (int argc, char *argv[]) {
 
             new_file = fopen(filename, "wb");
             *suffix_ptr = temp;
+        }
+
+        /* Lab3: Add a possibility that 1% of the packets are dropped */
+        // rand from 0 to 99, if 0 drop packet, otherwise continue proceeding
+        if (rand()%100 == 0){
+            printf("Packet #%d is dropped.\n", recv_pkt.frag_no);
+            continue;
         }
 
         // write into new file
