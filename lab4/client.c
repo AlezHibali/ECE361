@@ -216,21 +216,6 @@ void list(int socketfd, bool connected) {
         fprintf(stdout, "ERROR: client list - send error. \n");
         return;
     }
-
-    /* Wait to receive ACK from server */
-    memset(buf, 0, sizeof(buf));
-    if (recv(socketfd, buf, BUFF_SIZE, 0) == -1){
-        fprintf(stdout, "ERROR: client list - recv error. \n");
-        return;
-    }
-
-    /* Read ACK and print data */
-    readPacket(&recv_pkt, buf);
-    if (recv_pkt.type == 13){ // QU_ACK
-        fprintf(stdout, recv_pkt.data);
-    }
-    else 
-        fprintf(stdout, "ERROR: client list - receive unexpected ACK. \n");
 }
 
 void createsession (char* tok, int socketfd, bool connected){
