@@ -55,7 +55,7 @@ void delete_user(char id[]) {
             return;
         }
     }
-    fprintf(stdout, "ERROR: No ID found for to-be-deleted user! \n");
+    fprintf(stdout, "ERROR: No ID found for to-be-deleted user [%s]! \n", id);
     pthread_mutex_unlock(&user_lock);
 }
 
@@ -347,10 +347,35 @@ void *server_func(void *arg) {
         byte_recv = recv(*socketfd, buffer, BUFF_SIZE, 0);
         if(byte_recv == -1) {
             fprintf(stdout, "ERROR: server func recv. \n");
+            close(*socketfd);
             pthread_exit(NULL);
         }
         else if (byte_recv == 0){
+            /* check if user is in session */
+            bool is_in_session = false;
+            bool is_connected = false;
+
+            pthread_mutex_lock(&user_lock);
+            for (int i = 0; i < MAX_USER; i++){
+                if (user_list[i].connected && strcmp(user_list[i].id, id) == 0){
+                    is_connected = true;
+                    // leave session before logout
+                    if (user_list[i].in_session){
+                        is_in_session = true;
+                    } 
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&user_lock);
+
+            if (is_in_session) leave_session(id);
+
+            /* delete user when logout */
+            if (is_connected) delete_user(id);
+
             fprintf(stdout, "0 bytes recv, a connection is closed \n");
+
+            close(*socketfd);
             pthread_exit(NULL);
         }
         
