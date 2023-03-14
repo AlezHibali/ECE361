@@ -38,7 +38,8 @@ void *client_func(void* arg){
         else if (recv_pkt.type == 14){ // NS_NAK
             fprintf(stdout, recv_pkt.data);
         }
-        else if (recv_pkt.type == 10){ // not NS_ACK
+        else if (recv_pkt.type == 10){ // NS_ACK
+            in_session = true;
             fprintf(stdout, "Create_Session Successfully! \n");
         }
         else if (recv_pkt.type == 7){ // JN_NAK
@@ -251,26 +252,6 @@ void createsession (char* tok, int socketfd, bool connected){
         fprintf(stdout, "ERROR: client createsession - send error. \n");
         return;
     }
-
-    /* Wait to receive ACK from server */
-    memset(buf, 0, sizeof(buf));
-    if (recv(socketfd, buf, BUFF_SIZE, 0) == -1){
-        fprintf(stdout, "ERROR: client createsession - recv error. \n");
-        return;
-    }
-
-    /* Read ACK and print data */
-    readPacket(&recv_pkt, buf);
-    if (recv_pkt.type == 14){ // NS_NAK
-        fprintf(stdout, recv_pkt.data);
-    }
-    else if (recv_pkt.type != 10){ // not NS_ACK
-        fprintf(stdout, "ERROR: client createsession - receive unexpected ACK. \n");
-    }
-    else {
-        in_session = true;
-        fprintf(stdout, "Create_Session Succesfully.\n");
-    }
 }
 
 void leavesession (int socketfd, bool connected){
@@ -287,7 +268,7 @@ void leavesession (int socketfd, bool connected){
     }
 
     /* Send LEAVE_SESS packet to server */
-    packet send_pkt, recv_pkt;
+    packet send_pkt;
     send_pkt.type = 8; // LEAVE_SESS
     send_pkt.size = 0;
 
@@ -329,7 +310,7 @@ void joinsession (char* tok, int socketfd, bool connected){
     }
 
     /* Send JOIN packet to server */
-    packet send_pkt, recv_pkt;
+    packet send_pkt;
     send_pkt.type = 5; // JOIN
     send_pkt.size = strlen(id);
     strcpy(send_pkt.data, id);
