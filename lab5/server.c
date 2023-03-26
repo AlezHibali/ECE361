@@ -10,8 +10,11 @@
 #include <time.h>
 #include <netdb.h>
 #include <pthread.h>
-#include <unistd.h>
+#include <sys/types.h>
+#include <fcntl.h>
+#include <sys/time.h>
 #include "helper.h"
+#include "sys/select.h"
 
 #define QUEUE_SIZE 10
 #define MAX_SESSION 10
@@ -45,6 +48,9 @@ void add_user(char id[], char pwd[], int* sockfd){
 }
 
 void delete_user(char id[]) {
+    /* NULL name -> no delete */
+    if (id[0] == '\0')
+        return;
     pthread_mutex_lock(&user_lock);
     for (int i = 0; i < MAX_USER; i++){
         if (user_list[i].connected && strcmp(user_list[i].id, id) == 0){
@@ -57,6 +63,105 @@ void delete_user(char id[]) {
     }
     fprintf(stdout, "ERROR: No ID found for to-be-deleted user [%s]! \n", id);
     pthread_mutex_unlock(&user_lock);
+}
+
+bool register_user(const char *filename, const char *user, const char *pwd){
+    ID_PWD users[MAX_USER];
+    int num_users = 0;
+
+    FILE *fp = fopen(filename, "r");
+    if (fp == NULL) {
+        fprintf(stdout, "ERROR: cannot open file %s\n", filename);
+        return false;
+    }
+
+    /* read and check user list */
+    unsigned char buffer[BUFF_SIZE];
+    unsigned char username[MAX_NAME];
+    unsigned char password[MAX_DATA];
+    memset(buffer, 0, BUFF_SIZE);
+
+    while (fgets(buffer, BUFF_SIZE, fp) != NULL && num_users < MAX_USER) {
+        /* clear buffer */
+        memset(username, 0, MAX_NAME);
+        memset(password, 0, MAX_DATA);
+
+        if (sscanf(buffer, "%s %s", username, password) != 2) {
+            fprintf(stdout, "ERROR: register sscanf return error\n");
+            return false;
+        } else {
+            strncpy(users[num_users].id, username, sizeof(username));
+            strncpy(users[num_users].pwd, password, sizeof(password));
+            num_users++;
+        }
+    }
+
+    fclose(fp);
+
+    /* check if username match */
+    for (int i = 0; i < num_users; i++) {
+        if (strcmp(users[i].id, user) == 0){
+            return false; // username exists
+        } 
+    }
+
+    /* Write username and pwd to the file */
+    fp = fopen(filename, "a"); // append
+    if (fp == NULL) {
+        fprintf(stdout, "ERROR: cannot write to file %s\n", filename);
+        return false;
+    }
+
+    fprintf(fp, "%s %s\n", user, pwd);
+    fclose(fp);
+
+    return true;
+}
+
+int authentication(const char *filename, const char *user, const char *pwd){
+    ID_PWD users[MAX_USER];
+    int num_users = 0;
+
+    FILE *fp = fopen(filename, "r");
+    if (fp == NULL) {
+        fprintf(stdout, "ERROR: cannot open file %s\n", filename);
+        return 2;
+    }
+
+    /* read and store user list */
+    unsigned char buffer[BUFF_SIZE];
+    unsigned char username[MAX_NAME];
+    unsigned char password[MAX_DATA];
+    memset(buffer, 0, BUFF_SIZE);
+
+    while (fgets(buffer, BUFF_SIZE, fp) != NULL && num_users < MAX_USER) {
+        /* clear buffer */
+        memset(username, 0, MAX_NAME);
+        memset(password, 0, MAX_DATA);
+
+        if (sscanf(buffer, "%s %s", username, password) != 2) {
+            fprintf(stdout, "ERROR: authentication sscanf return error\n");
+        } else {
+            strncpy(users[num_users].id, username, sizeof(username));
+            strncpy(users[num_users].pwd, password, sizeof(password));
+            num_users++;
+        }
+    }
+
+    fclose(fp);
+
+    /* check if username and password match */
+    for (int i = 0; i < num_users; i++) {
+        if (strcmp(users[i].id, user) == 0){
+            /* found user, check pwd */
+            if (strcmp(users[i].pwd, pwd) == 0)
+                return 0;
+            else
+                return 1; // wrong pwd
+        } 
+    }
+
+    return 2; // not registered
 }
 
 void leave_session(char id[]){
@@ -338,10 +443,65 @@ void *server_func(void *arg) {
 
     while (true) {
         int byte_recv;
+        fd_set read_fds;
+        struct timeval tv;
         packet recv_pkt, send_pkt;
 
         memset(&buffer, 0, BUFF_SIZE);
         memset(&data, 0, MAX_DATA);
+
+        /* Set Timeout Option for Recv */
+        FD_ZERO(&read_fds);
+        FD_SET(*socketfd, &read_fds);
+
+        // set timeout to 60 seconds
+        tv.tv_sec = 60;
+        tv.tv_usec = 0;
+
+        // wait for socketfd to become readable or timeout
+        int rv = select((*socketfd)+1, &read_fds, NULL, NULL, &tv);
+        if (rv == -1) {
+            fprintf(stdout, "ERROR: server Select failed. \n");
+            continue;
+        }
+        else if (rv == 0) {
+            /* check if user is in session */
+            bool is_in_session = false;
+            pthread_mutex_lock(&user_lock);
+            for (int i = 0; i < MAX_USER; i++){
+                if (user_list[i].connected && strcmp(user_list[i].id, id) == 0){
+                    // leave session before logout
+                    if (user_list[i].in_session){
+                        is_in_session = true;
+                    } 
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&user_lock);
+
+            /* delete user when logout */
+            if (is_in_session) leave_session(id);
+            delete_user(id);
+
+            /* Send TIMEOUT pkt to client for timeout */
+            send_pkt.type = 18; // TIMEOUT
+            strcpy(send_pkt.source, id);
+            strcpy(send_pkt.data, "ERROR: Timeout - Logging out. \n");
+            send_pkt.size = strlen(send_pkt.data);
+
+            /* Sending Packets to client */
+            memset(&buffer, 0, BUFF_SIZE);
+            createPacket(&send_pkt, buffer);
+            if (send(*socketfd, buffer, BUFF_SIZE, 0) == -1){
+                fprintf(stdout, "ERROR: server func - send error. \n");
+                close(*socketfd);
+                pthread_exit(NULL);
+            }
+
+            close(*socketfd);
+            pthread_exit(NULL);
+            break;
+        }
 
         /* Receiving from socket */
         byte_recv = recv(*socketfd, buffer, BUFF_SIZE, 0);
@@ -368,9 +528,8 @@ void *server_func(void *arg) {
             }
             pthread_mutex_unlock(&user_lock);
 
-            if (is_in_session) leave_session(id);
-
             /* delete user when logout */
+            if (is_in_session) leave_session(id);
             if (is_connected) delete_user(id);
 
             fprintf(stdout, "0 bytes recv, a connection is closed \n");
@@ -397,20 +556,38 @@ void *server_func(void *arg) {
             }
             pthread_mutex_unlock(&user_lock);
 
+            int auth = authentication("userlist_db.txt", id, data);
+
             /* Send-packet Creation */
             /* NAK for duplicate user_id */
             if (dup_user){
                 send_pkt.type = 3; // LO_NAK
                 strcpy(send_pkt.source, id);
-                strcpy(send_pkt.data, "NAK: Username exists, try another name!\n");
+                strcpy(send_pkt.data, "LO_NAK: Login - User already logged in!\n");
                 send_pkt.size = strlen(send_pkt.data);
+                memset(&id, 0, MAX_NAME);
+            }
+            /* NAK for wrong pwd */
+            else if (auth == 1){
+                send_pkt.type = 3; // LO_NAK
+                strcpy(send_pkt.source, id);
+                strcpy(send_pkt.data, "LO_NAK: Login - Wrong password!\n");
+                send_pkt.size = strlen(send_pkt.data);
+                memset(&id, 0, MAX_NAME);
+            }
+            /* NAK for username that is not registered*/
+            else if (auth == 2){
+                send_pkt.type = 3; // LO_NAK
+                strcpy(send_pkt.source, id);
+                strcpy(send_pkt.data, "LO_NAK: Login - Username not registered or Userlist is missing.\n");
+                send_pkt.size = strlen(send_pkt.data);
+                memset(&id, 0, MAX_NAME);
             }
             /* else go ACK msg */
             else {
                 send_pkt.type = 2; // LO_ACK
                 strcpy(send_pkt.source, id);
                 send_pkt.size = 0;
-
                 add_user(id, data, socketfd);
             }
             
@@ -438,10 +615,12 @@ void *server_func(void *arg) {
             }
             pthread_mutex_unlock(&user_lock);
 
-            if (is_in_session) leave_session(id);
-
             /* delete user when logout */
+            if (is_in_session) leave_session(id);
             delete_user(id);
+
+            close(*socketfd);
+            pthread_exit(NULL);
         }
         else if (recv_pkt.type == 5) { // JOIN
             /* Store id and join session */
@@ -529,6 +708,35 @@ void *server_func(void *arg) {
         }
         else if (recv_pkt.type == 11) { // MESSAGE
             broadcast(recv_pkt.data, id);
+        }
+        else if (recv_pkt.type == 15) { // REGISTER
+            /* Store id and password */
+            strncpy(id, (char *)(recv_pkt.source), MAX_NAME);
+            strncpy(data, (char *)(recv_pkt.data), MAX_DATA);
+
+            /* Packet Sending */
+            /* register successfully -> send ACK */
+            if (register_user("userlist_db.txt", id, data) == true){
+                send_pkt.type = 16; // REG_ACK
+                strcpy(send_pkt.source, id);
+                send_pkt.size = 0;
+            }
+            /* else, send NAK for error reasoning */
+            else {
+                send_pkt.type = 17; // REG_NAK
+                strcpy(send_pkt.source, id);
+                strcpy(send_pkt.data, "REG_NAK: Register failed, username exists!\n");
+                send_pkt.size = strlen(send_pkt.data);
+            }
+            
+            /* Sending Packets to client */
+            memset(&buffer, 0, BUFF_SIZE);
+            createPacket(&send_pkt, buffer);
+            if (send(*socketfd, buffer, BUFF_SIZE, 0) == -1){
+                fprintf(stdout, "ERROR: server func - send error. \n");
+                close(*socketfd);
+                pthread_exit(NULL);
+            }
         }
         else
             fprintf(stdout, "ERROR: server func - receive unexpected ACK. \n");

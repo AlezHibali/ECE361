@@ -16,7 +16,9 @@ bool in_session = false;
 
 void *client_func(void* arg){
     char buf[BUFF_SIZE];
-    int* socketfd = arg;
+    thread_args* temp = arg;
+    int* socketfd = temp->socketfd;
+    bool* connected = temp->connected;
 
     while (true) {
         /* Wait to receive ACK from server */
@@ -51,6 +53,13 @@ void *client_func(void* arg){
         }
         else if (recv_pkt.type == 11){ // MESSAGE
             fprintf(stdout, recv_pkt.data);
+        }
+        else if (recv_pkt.type == 18){ // TIMEOUT
+            fprintf(stdout, recv_pkt.data);
+            in_session = false;
+            *connected = false;
+            close(*socketfd);
+            break;
         }
         else 
             fprintf(stdout, "ERROR: client func - receive unexpected ACK. \n");
@@ -146,13 +155,18 @@ void login(char* tok, int* socketfd, bool* connected, pthread_t* thread){
         return;
     }
 
+    /* packet socketfd and connected into a single arg */
+    thread_args *args = (thread_args *) malloc(sizeof(thread_args));
+    args->connected = connected;
+    args->socketfd = socketfd;
+
     readPacket(&login_info, buf);
     if (login_info.type == 2){ // LO_ACK
-        if (pthread_create(thread, NULL, client_func, (void *)socketfd) == 0)
+        if (pthread_create(thread, NULL, client_func, (void *)args) == 0)
         fprintf(stdout, "Login Successfully.\n");
     }
     else if (login_info.type == 3){ // LO_NAK
-        fprintf(stdout, "ERROR: client login - receiving NAK. \n");
+        // fprintf(stdout, "ERROR: client login - receiving NAK. \n");
         fprintf(stdout, login_info.data);
         *connected = false;
         close(*socketfd);
@@ -326,6 +340,99 @@ void joinsession (char* tok, int socketfd, bool connected){
     }
 }
 
+void reg_user(char* tok, int* socketfd){
+    /* Tokenize Input and Read Info */
+    char *id, *pwd, *ip, *port;
+    tok = strtok(NULL, " ");
+	id = tok;
+    tok = strtok(NULL, " ");
+	pwd = tok;
+    tok = strtok(NULL, " ");
+	ip = tok;
+    tok = strtok(NULL, " ");
+	port = tok;
+    tok = strtok(NULL, " ");
+
+    /* Usage Checking */
+    if (id == NULL || pwd == NULL || ip == NULL || port == NULL || tok != NULL){
+        fprintf(stdout, "Usage: /register id pwd ip port \n");
+        return;
+    }
+
+    /* Cannot have colon in ID */
+    for (char* temp = id; *temp != '\0'; temp++){
+        if (*temp == ':'){
+            fprintf(stdout, "ERROR: No colon in ID.\n");
+            return;
+        }
+    }
+
+    /* Start Connection */
+    struct addrinfo hint, *res;
+    memset(&hint, 0, sizeof hint);
+    hint.ai_family = AF_INET; // IPv4  
+    hint.ai_socktype = SOCK_STREAM; // for TCP
+
+    if (getaddrinfo(ip, port, &hint, &res) != 0){
+        fprintf(stdout, "ERROR: client getaddrinfo. \n");
+        return;
+    }
+
+    /* Loop over res to find available connection */
+    for(struct addrinfo *temp = res; temp != NULL; temp = temp->ai_next) {
+        *socketfd = socket(temp->ai_family, temp->ai_socktype, temp->ai_protocol);
+        if (*socketfd == -1) {
+            fprintf(stdout, "ERROR: client socket. \n");
+            continue;
+        }
+        if (connect(*socketfd, temp->ai_addr, temp->ai_addrlen) == -1) {
+            close(*socketfd);
+            fprintf(stdout, "ERROR: client connect. \n");
+            continue;
+        }
+        break; 
+    }
+
+    /* Send register packet to server */
+    packet reg_info;
+    reg_info.type = 15;
+    reg_info.size = strlen(pwd);
+    strncpy(reg_info.source, id, MAX_NAME);
+    strncpy(reg_info.data, pwd, MAX_DATA);
+
+    char buf[BUFF_SIZE];
+    createPacket(&reg_info, buf);
+    if (send(*socketfd, buf, BUFF_SIZE, 0) == -1){
+        fprintf(stdout, "ERROR: client register - send error. \n");
+        close(*socketfd);
+        return;
+    }
+
+    /* Wait to receive ACK from server */
+    memset(buf, 0, sizeof(buf));
+    if (recv(*socketfd, buf, BUFF_SIZE, 0) == -1){
+        fprintf(stdout, "ERROR: client register - recv error. \n");
+        close(*socketfd);
+        return;
+    }
+
+    readPacket(&reg_info, buf);
+    if (reg_info.type == 16){ // REG_ACK
+        fprintf(stdout, "Register Successfully!\n");
+    }
+    else if (reg_info.type == 17){ // REG_NAK
+        // fprintf(stdout, "ERROR: client register - receiving NAK. \n");
+        fprintf(stdout, reg_info.data);
+        close(*socketfd);
+        return;
+    }
+    else {
+        fprintf(stdout, "ERROR: client register - receiving unexpected packet type. \n");
+        close(*socketfd);
+        return;
+    }
+}
+
 int main (int argc, char *argv[]) {
     if (argc != 1){
         printf("Usage: client\n");
@@ -379,6 +486,9 @@ int main (int argc, char *argv[]) {
             /*Automatically Logout before quiting program */
             if (connected) logout(socketfd, &connected, &thread);
             break;
+        }
+        else if (strcmp(cursor, "/register") == 0){
+            reg_user(cursor, &socketfd);
         }
         /* Send Message to Server */
         else {
