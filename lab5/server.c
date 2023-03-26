@@ -59,105 +59,6 @@ void delete_user(char id[]) {
     pthread_mutex_unlock(&user_lock);
 }
 
-bool check_user_db_dup(const char *filename, const char *user, const char *pwd){
-    ID_PWD users[MAX_USER];
-    int num_users = 0;
-
-    FILE *fp = fopen(filename, "r");
-    if (fp == NULL) {
-        fprintf(stdout, "ERROR: cannot open file %s\n", filename);
-        return false;
-    }
-
-    /* read and check user list */
-    unsigned char buffer[BUFF_SIZE];
-    unsigned char username[MAX_NAME];
-    unsigned char password[MAX_DATA];
-    memset(buffer, 0, BUFF_SIZE);
-
-    while (fgets(buffer, BUFF_SIZE, fp) != NULL && num_users < MAX_USERS) {
-        /* clear buffer */
-        memset(username, 0, MAX_NAME);
-        memset(password, 0, MAX_DATA);
-
-        if (sscanf(buffer, "%s %s", username, password) != 2) {
-            fprintf(stdout, "ERROR: register sscanf return error\n");
-            return false;
-        } else {
-            strncpy(users[num_users].id, username, sizeof(username));
-            strncpy(users[num_users].pwd, password, sizeof(password));
-            num_users++;
-        }
-    }
-
-    fclose(fp);
-
-    /* check if username match */
-    for (int i = 0; i < num_users; i++) {
-        if (strcmp(users[i].username, user) == 0){
-            return false; // username exists
-        } 
-    }
-
-    /* Write username and pwd to the file */
-    fp = fopen(filename, "w");
-    if (fp == NULL) {
-        fprintf(stdout, "ERROR: cannot write to file %s\n", filename);
-        return false;
-    }
-
-    fprintf(fp, "%s %s\n", user, pwd);
-    fclose(fp);
-
-    return true;
-}
-
-int authentication(const char *filename, const char *user, const char *pwd){
-    ID_PWD users[MAX_USER];
-    int num_users = 0;
-
-    FILE *fp = fopen(filename, "r");
-    if (fp == NULL) {
-        fprintf(stdout, "ERROR: cannot open file %s\n", filename);
-        return 2;
-    }
-
-    /* read and store user list */
-    unsigned char buffer[BUFF_SIZE];
-    unsigned char username[MAX_NAME];
-    unsigned char password[MAX_DATA];
-    memset(buffer, 0, BUFF_SIZE);
-
-    while (fgets(buffer, BUFF_SIZE, fp) != NULL && num_users < MAX_USERS) {
-        /* clear buffer */
-        memset(username, 0, MAX_NAME);
-        memset(password, 0, MAX_DATA);
-
-        if (sscanf(buffer, "%s %s", username, password) != 2) {
-            fprintf(stdout, "ERROR: authentication sscanf return error\n");
-        } else {
-            strncpy(users[num_users].id, username, sizeof(username));
-            strncpy(users[num_users].pwd, password, sizeof(password));
-            num_users++;
-        }
-    }
-
-    fclose(fp);
-
-    /* check if username and password match */
-    for (int i = 0; i < num_users; i++) {
-        if (strcmp(users[i].username, user) == 0){
-            /* found user, check pwd */
-            if (strcmp(users[i].password, pwd) == 0)
-                return 0;
-            else
-                return 1; // wrong pwd
-        } 
-    }
-
-    return 2; // not registered
-}
-
 void leave_session(char id[]){
     char session_id[MAX_DATA];
     memset(session_id, 0, MAX_DATA);
@@ -496,28 +397,12 @@ void *server_func(void *arg) {
             }
             pthread_mutex_unlock(&user_lock);
 
-            int auth = authentication("userlist_db.txt", id, data)
-
             /* Send-packet Creation */
             /* NAK for duplicate user_id */
             if (dup_user){
                 send_pkt.type = 3; // LO_NAK
                 strcpy(send_pkt.source, id);
-                strcpy(send_pkt.data, "NAK: User already logged in!\n");
-                send_pkt.size = strlen(send_pkt.data);
-            }
-            /* NAK for wrong pwd */
-            else if (auth == 1){
-                send_pkt.type = 3; // LO_NAK
-                strcpy(send_pkt.source, id);
-                strcpy(send_pkt.data, "NAK: Wrong password!\n");
-                send_pkt.size = strlen(send_pkt.data);
-            }
-            /* NAK for username that is not registered*/
-            else if (auth == 2){
-                send_pkt.type = 3; // LO_NAK
-                strcpy(send_pkt.source, id);
-                strcpy(send_pkt.data, "NAK: Username not registered or User list is missing.\n");
+                strcpy(send_pkt.data, "NAK: Username exists, try another name!\n");
                 send_pkt.size = strlen(send_pkt.data);
             }
             /* else go ACK msg */
@@ -525,6 +410,7 @@ void *server_func(void *arg) {
                 send_pkt.type = 2; // LO_ACK
                 strcpy(send_pkt.source, id);
                 send_pkt.size = 0;
+
                 add_user(id, data, socketfd);
             }
             
@@ -643,35 +529,6 @@ void *server_func(void *arg) {
         }
         else if (recv_pkt.type == 11) { // MESSAGE
             broadcast(recv_pkt.data, id);
-        }
-        else if (recv_pkt.type == 15) { // REGISTER
-            /* Store id and password */
-            strncpy(id, (char *)(recv_pkt.source), MAX_NAME);
-            strncpy(data, (char *)(recv_pkt.data), MAX_DATA);
-
-            /* Packet Sending */
-            /* register successfully -> send ACK */
-            if (register_user("user_list_db.txt", id, pwd) == true){
-                send_pkt.type = 16; // REG_ACK
-                strcpy(send_pkt.source, id);
-                send_pkt.size = 0;
-            }
-            /* else, send NAK for error reasoning */
-            else {
-                send_pkt.type = 17; // REG_NAK
-                strcpy(send_pkt.source, id);
-                strcpy(send_pkt.data, "NAK: Register failed, username exists!\n");
-                send_pkt.size = strlen(send_pkt.data);
-            }
-            
-            /* Sending Packets to client */
-            memset(&buffer, 0, BUFF_SIZE);
-            createPacket(&send_pkt, buffer);
-            if (send(*socketfd, buffer, BUFF_SIZE, 0) == -1){
-                fprintf(stdout, "ERROR: server func - send error. \n");
-                close(*socketfd);
-                pthread_exit(NULL);
-            }
         }
         else
             fprintf(stdout, "ERROR: server func - receive unexpected ACK. \n");

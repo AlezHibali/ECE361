@@ -9,7 +9,7 @@
 #define BUFF_SIZE 1400
 #define MAX_NAME 128
 #define MAX_DATA 1024
-#define MAX_USER 20
+#define MAX_USER 10
 
 // 1 LOGIN  <password> Login with the server 
 // 2 LO_ACK  Acknowledge successful login 
@@ -26,9 +26,6 @@
 // 13 QU_ACK <users and sessions> Reply followed by a list of users online 
 
 // 14 NS_NAK  NAK new conference session
-// 15 REGISTER <password> Register with the server
-// 16 REG_ACK Acknowledge successful registration
-// 17 REG_NAK <reason for failure> Negative acknowledgement of register
 
 typedef struct message {
     unsigned int type;  
@@ -52,11 +49,6 @@ typedef struct Conference {
     int socketfd_list[MAX_USER];
     int user_count;
 } session;
-
-typedef struct User_info {
-    unsigned char id[MAX_NAME];
-    unsigned char pwd[MAX_DATA];
-} ID_PWD;
 
 void createPacket (const packet *packet, char* buff){
     // Clean buffers:

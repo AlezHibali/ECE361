@@ -380,9 +380,6 @@ int main (int argc, char *argv[]) {
             if (connected) logout(socketfd, &connected, &thread);
             break;
         }
-        else if (strcmp(cursor, "/register") == 0){
-            // register(cursor, &socketfd);
-        }
         /* Send Message to Server */
         else {
             /* cannot send before login */
