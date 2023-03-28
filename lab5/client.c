@@ -340,7 +340,13 @@ void joinsession (char* tok, int socketfd, bool connected){
     }
 }
 
-void reg_user(char* tok, int* socketfd){
+void reg_user(char* tok, int* socketfd, bool connected){
+    /* If already connected */
+    if (connected){
+        fprintf(stdout, "ERROR: logout before register.\n");
+        return;
+    }
+
     /* Tokenize Input and Read Info */
     char *id, *pwd, *ip, *port;
     tok = strtok(NULL, " ");
@@ -431,6 +437,8 @@ void reg_user(char* tok, int* socketfd){
         close(*socketfd);
         return;
     }
+
+    close(*socketfd);
 }
 
 int main (int argc, char *argv[]) {
@@ -488,7 +496,7 @@ int main (int argc, char *argv[]) {
             break;
         }
         else if (strcmp(cursor, "/register") == 0){
-            reg_user(cursor, &socketfd);
+            reg_user(cursor, &socketfd, connected);
         }
         /* Send Message to Server */
         else {

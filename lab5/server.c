@@ -737,6 +737,9 @@ void *server_func(void *arg) {
                 close(*socketfd);
                 pthread_exit(NULL);
             }
+
+            close(*socketfd);
+            pthread_exit(NULL);
         }
         else
             fprintf(stdout, "ERROR: server func - receive unexpected ACK. \n");
